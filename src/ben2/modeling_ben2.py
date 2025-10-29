@@ -1272,8 +1272,8 @@ class BEN_Base(
                 If False, no progress information is displayed.
 
             webm (bool, optional):
-                If True (default), exports a WebM video with alpha channel (VP9 / yuva420p).
-                If False, exports an MP4 video composited over a solid color background.
+                If True, exports a WebM video with alpha channel (VP9 / yuva420p).
+                If False (default), exports an MP4 video composited over a solid color background.
 
             rgb_value (tuple, optional):
                 The RGB background color (e.g., green screen) used to composite frames when
@@ -1349,12 +1349,13 @@ class BEN_Base(
         if progress_bar is not None:
             progress_bar.close()
 
+        cap.release()
+
         if webm:
             alpha_webm_path = os.path.join(output_path, f"{output_name}.webm")
             pil_images_to_webm_alpha(foregrounds, alpha_webm_path, fps=original_fps)
 
         else:
-            cap.release()
             fg_output = os.path.join(output_path, f"{output_name}.mp4")
 
             pil_images_to_mp4(

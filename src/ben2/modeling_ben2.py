@@ -13,6 +13,7 @@ import cv2
 import os
 import subprocess
 import tempfile
+from tqdm import tqdm
 from huggingface_hub import PyTorchModelHubMixin
 
 
@@ -1228,6 +1229,7 @@ class BEN_Base(
         self,
         video_path,
         output_path="./",
+        output_name=None,
         fps=0,
         refine_foreground=False,
         batch=1,
@@ -1248,6 +1250,11 @@ class BEN_Base(
                 Directory (or full path) where the output video and/or files will be saved.
                 Defaults to "./".
 
+            output_name (str, optional):
+                Name for the output file (without extension). If not provided, it will be
+                inferred from the video_path by taking the filename without extension and
+                appending "-out" suffix.
+
             fps (int, optional):
                 The frames per second (FPS) to use for the output video. If 0 (default), the
                 original FPS of the input video is used. Otherwise, overrides it.
@@ -1261,8 +1268,8 @@ class BEN_Base(
                 may require more GPU memory. Defaults to 1.
 
             print_frames_processed (bool, optional):
-                If True (default), prints progress (how many frames have been processed) to
-                the console.
+                If True (default), shows progress using tqdm progress bar.
+                If False, no progress information is displayed.
 
             webm (bool, optional):
                 If True (default), exports a WebM video with alpha channel (VP9 / yuva420p).
@@ -1275,6 +1282,12 @@ class BEN_Base(
         Returns:
             None. Writes the output video(s) to disk in the specified format.
         """
+
+        # Infer output_name from video_path if not provided
+        if output_name is None:
+            video_basename = os.path.basename(video_path)
+            video_name_without_ext = os.path.splitext(video_basename)[0]
+            output_name = f"{video_name_without_ext}-out"
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -1296,6 +1309,11 @@ class BEN_Base(
         batch_frames = []
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+        # Create progress bar if print_frames_processed is True
+        progress_bar = None
+        if print_frames_processed:
+            progress_bar = tqdm(total=total_frames, desc="Processing frames", unit="frame")
+
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -1305,10 +1323,8 @@ class BEN_Base(
                         foregrounds.append(batch_results)
                     else:
                         foregrounds.extend(batch_results)
-                    if print_frames_processed:
-                        print(
-                            f"Processed frames {frame_idx-len(batch_frames)+1} to {frame_idx} of {total_frames}"
-                        )
+                    if progress_bar is not None:
+                        progress_bar.update(len(batch_frames))
                 break
 
             # Process every frame instead of using intervals
@@ -1322,22 +1338,24 @@ class BEN_Base(
                     foregrounds.append(batch_results)
                 else:
                     foregrounds.extend(batch_results)
-                if print_frames_processed:
-                    print(
-                        f"Processed frames {frame_idx-batch+1} to {frame_idx} of {total_frames}"
-                    )
+                if progress_bar is not None:
+                    progress_bar.update(batch)
                 batch_frames = []
                 processed_count += batch
 
             frame_idx += 1
 
+        # Close progress bar
+        if progress_bar is not None:
+            progress_bar.close()
+
         if webm:
-            alpha_webm_path = os.path.join(output_path, "foreground.webm")
+            alpha_webm_path = os.path.join(output_path, f"{output_name}.webm")
             pil_images_to_webm_alpha(foregrounds, alpha_webm_path, fps=original_fps)
 
         else:
             cap.release()
-            fg_output = os.path.join(output_path, "foreground.mp4")
+            fg_output = os.path.join(output_path, f"{output_name}.mp4")
 
             pil_images_to_mp4(
                 foregrounds, fg_output, fps=original_fps, rgb_value=rgb_value
@@ -1346,7 +1364,7 @@ class BEN_Base(
 
             try:
                 fg_audio_output = os.path.join(
-                    output_path, "foreground_output_with_audio.mp4"
+                    output_path, f"{output_name}_with_audio.mp4"
                 )
                 add_audio_to_video(fg_output, video_path, fg_audio_output)
             except Exception as e:

@@ -29,7 +29,7 @@ setuptools.setup(
     description="A package for BEN2",
     long_description=pathlib.Path("README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
-    url="https://github.com/PramaLLC/BEN2",
+    url="https://github.com/naufalso/BEN2",
     packages=find_packages("src"),
     package_dir={"": "src"},
     install_requires=requirements,

@@ -16,7 +16,7 @@ import os
 import subprocess
 import time
 import tempfile
-
+from tqdm import tqdm
 
 
 
@@ -1073,8 +1073,18 @@ class BEN_Base(nn.Module):
 
 
 
-    def segment_video(self, video_path, output_path="./", fps=0, refine_foreground=False, batch=1, print_frames_processed=True, webm = False, rgb_value= (0, 255, 0)):
-    
+    def segment_video(
+        self,
+        video_path,
+        output_path="./",
+        output_name=None,
+        fps=0,
+        refine_foreground=False,
+        batch=1,
+        print_frames_processed=True,
+        webm=False,
+        rgb_value=(0, 255, 0),
+    ):
         """
         Segments the given video to extract the foreground (with alpha) from each frame
         and saves the result as either a WebM video (with alpha channel) or MP4 (with a
@@ -1088,12 +1098,17 @@ class BEN_Base(nn.Module):
                 Directory (or full path) where the output video and/or files will be saved.
                 Defaults to "./".
 
+            output_name (str, optional):
+                Name for the output file (without extension). If not provided, it will be
+                inferred from the video_path by taking the filename without extension and
+                appending "-out" suffix.
+
             fps (int, optional):
                 The frames per second (FPS) to use for the output video. If 0 (default), the
                 original FPS of the input video is used. Otherwise, overrides it.
 
             refine_foreground (bool, optional):
-                Whether to run an additional “refine foreground” process on each frame. 
+                Whether to run an additional “refine foreground” process on each frame.
                 Defaults to False.
 
             batch (int, optional):
@@ -1101,12 +1116,12 @@ class BEN_Base(nn.Module):
                 may require more GPU memory. Defaults to 1.
 
             print_frames_processed (bool, optional):
-                If True (default), prints progress (how many frames have been processed) to 
-                the console.
+                If True (default), shows progress using tqdm progress bar.
+                If False, no progress information is displayed.
 
             webm (bool, optional):
-                If True (default), exports a WebM video with alpha channel (VP9 / yuva420p).
-                If False, exports an MP4 video composited over a solid color background.
+                If True, exports a WebM video with alpha channel (VP9 / yuva420p).
+                If False (default), exports an MP4 video composited over a solid color background.
 
             rgb_value (tuple, optional):
                 The RGB background color (e.g., green screen) used to composite frames when
@@ -1116,7 +1131,12 @@ class BEN_Base(nn.Module):
             None. Writes the output video(s) to disk in the specified format.
         """
 
-        
+        # Infer output_name from video_path if not provided
+        if output_name is None:
+            video_basename = os.path.basename(video_path)
+            video_name_without_ext = os.path.splitext(video_basename)[0]
+            output_name = f"{video_name_without_ext}-out"
+
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise IOError(f"Cannot open video: {video_path}")
@@ -1137,6 +1157,11 @@ class BEN_Base(nn.Module):
         batch_frames = []
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+        # Create progress bar if print_frames_processed is True
+        progress_bar = None
+        if print_frames_processed:
+            progress_bar = tqdm(total=total_frames, desc="Processing frames", unit="frame")
+
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -1146,42 +1171,50 @@ class BEN_Base(nn.Module):
                         foregrounds.append(batch_results)
                     else:
                         foregrounds.extend(batch_results)
-                    if print_frames_processed:
-                        print(f"Processed frames {frame_idx-len(batch_frames)+1} to {frame_idx} of {total_frames}")
+                    if progress_bar is not None:
+                        progress_bar.update(len(batch_frames))
                 break
 
             # Process every frame instead of using intervals
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_frame = Image.fromarray(frame_rgb)
             batch_frames.append(pil_frame)
-            
+
             if len(batch_frames) == batch:
                 batch_results = self.inference(batch_frames, refine_foreground)
                 if isinstance(batch_results, Image.Image):
                     foregrounds.append(batch_results)
                 else:
                     foregrounds.extend(batch_results)
-                if print_frames_processed:
-                    print(f"Processed frames {frame_idx-batch+1} to {frame_idx} of {total_frames}")
+                if progress_bar is not None:
+                    progress_bar.update(batch)
                 batch_frames = []
                 processed_count += batch
 
             frame_idx += 1
 
+        # Close progress bar
+        if progress_bar is not None:
+            progress_bar.close()
+
+        cap.release()
 
         if webm:
-            alpha_webm_path = os.path.join(output_path, "foreground.webm")
+            alpha_webm_path = os.path.join(output_path, f"{output_name}.webm")
             pil_images_to_webm_alpha(foregrounds, alpha_webm_path, fps=original_fps)
 
         else:
-            cap.release()
-            fg_output = os.path.join(output_path, 'foreground.mp4')
-            
-            pil_images_to_mp4(foregrounds, fg_output, fps=original_fps,rgb_value=rgb_value)
+            fg_output = os.path.join(output_path, f"{output_name}.mp4")
+
+            pil_images_to_mp4(
+                foregrounds, fg_output, fps=original_fps, rgb_value=rgb_value
+            )
             cv2.destroyAllWindows()
-            
+
             try:
-                fg_audio_output = os.path.join(output_path, 'foreground_output_with_audio.mp4')
+                fg_audio_output = os.path.join(
+                    output_path, f"{output_name}_with_audio.mp4"
+                )
                 add_audio_to_video(fg_output, video_path, fg_audio_output)
             except Exception as e:
                 print("No audio found in the original video")
